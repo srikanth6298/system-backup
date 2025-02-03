@@ -1,0 +1,289 @@
+# root privilege
+if [ ${UID} -ne 0 ]; then
+    echo -e "\e[1;31mNon root user. Please run as root.\e[0m"
+    exit
+fi
+
+filename=${0##*/}
+
+# enviroment variable
+source /etc/profile
+if [ ! $Bkdir ];then
+   echo -e "\e[1;31mThe backup file storage path is not specified!\e[0m"
+   read -p "storage path:" Bkdir
+   echo -e "# Bkd enviroment set \nexport Bkdir=$Bkdir" >> /etc/profile
+   source /etc/profile
+else
+    [ ! -d "$Bkdir" ] && echo -e "\e[1;31mBackup dir is not exist!\e[0m\n"
+fi
+
+
+# non-parameter
+[ $# -eq 0 ] && echo -e "$filename: you must specify some parameter.
+Try '$filename --help' for more information."
+
+function BackupSystem(){
+    cd $1
+    path=`pwd`
+    echo $path
+    cd /
+    tar -cvpzf $path/Linux_backup@`date +%Y-%m-%d`.tar.gz --exclude=/proc --exclude=/tmp --exclude=/home --exclude=/lost+found --exclude=/media --exclude=/mnt --exclude=/run --exclude=$path/*  / --warning=none 2>/dev/null
+    
+}
+
+function RestoreSystem(){
+ 
+    # method one
+    if [ $filedate ];then
+        # get absolute path
+        restorepath=$1/Linux_backup@$filedate.tar.gz
+    else
+        restorepath=`GetmaxDate $1`
+    fi
+
+    # if dir no file
+    if [ $? -eq 1 ];then
+        echo -e "\e[1;31mNo files in the backup directory can be restored\e[0m"
+        exit 1
+    fi
+    echo "Ready to Restore: $restorepath"
+    cd /
+
+    # get file size
+    total_size=`ls -al $restorepath| awk '{print $5}'`
+    echo "total_size:$total_size"
+
+    # set progress bar
+    block_size=$(($total_size/16000))
+    block_size=$(($block_size + 1))
+    echo $block_size
+
+    # unpack
+    tar zxvpf $restorepath -C $2 --warning=none --blocking-factor=$block_size --checkpoint=1 --checkpoint-action='ttyout=unpack %u%    \r' --ignore-failed-read --ignore-command-error 2>/dev/null 
+}
+
+
+function Backuprm(){
+    
+    path="$1" 
+    # method one
+    if [ $filedate ];then
+        echo "The date be deleted:"
+        echo "$filedate"
+        rm $path/Linux_backup@$filedate.tar.gz
+        exit 0
+    fi
+
+    # method two
+    files=$(ls $path)
+    minDate='2049-01-01'
+    for filename in $files
+    do 
+        Date=$(GetDate $filename)
+        minDate=$(CompareminDate $Date $minDate)
+    done
+    for filename in $files
+    do
+        result=$(echo $filename | grep "${minDate}")
+        if [ "$result" != "" ];
+        then
+            echo "The date be deleted:"
+            echo $minDate
+            $(rm $path/$filename)
+            exit 0
+        fi
+    done
+
+    echo -e "\e[1;31m No backup files to be deleted!\e[0m"
+    exit 1
+}
+
+
+function lookup(){
+    files=`ls $1`
+    for filename in $files
+    do
+        result=`echo $filename | grep "${Linux}"`
+        if [ "$result" != "" ];then
+            echo -e "\e[1;33m$filename\e[0m"
+        fi
+    done
+}
+
+
+
+function CompareminDate(){
+    t1=`date -d "$1" +%s`
+    t2=`date -d "$2" +%s`
+     
+    if [ $t1 -gt $t2 ]; then
+        mindata=$2
+    else
+        mindata=$1
+    fi
+
+    echo $mindata
+}
+
+
+function ComparemaxDate(){
+    t1=`date -d "$1" +%s`
+    t2=`date -d "$2" +%s`
+     
+    if [ $t1 -gt $t2 ]; then
+        maxdata=$1
+    else
+        maxdata=$2
+    fi
+
+    echo $maxdata
+}
+
+
+function GetDate(){
+    string=$1 
+    tmp=${string##*@}
+    date=${tmp%%.tar.gz}
+    echo $date
+}
+
+
+function GetmaxDate(){    
+    path="$1" 
+    files=$(ls $path)
+    maxDate='1999-01-01'
+    for filename in $files
+    do 
+        Date=$(GetDate $filename)
+        maxDate=$(ComparemaxDate $Date $maxDate)
+    done
+    for filename in $files
+    do
+        result=$(echo $filename | grep "${maxDate}")
+        if [ "$result" != "" ];
+        then
+            echo "$path/$filename"
+            exit 0
+        fi
+    done
+    
+    exit 1
+}
+
+
+function Usage(){
+    echo \[Usage\]: $filename \[OPTOPN...\] \[PATH\]
+    echo  bksys is a very simple and easy-to-use Linux system backup tool.
+    echo
+    echo Examples:
+    printf "%-5s %-20s %-60s" $filename -rpath "# Restore the system to the location of path."
+    echo
+    printf "%-5s %-20s %-60s" "" "" "  the default backup path is /, default restore date "
+    echo
+    printf "%-5s %-20s %-60s" "" "" "  is newer. If you want to specify a date, see -t usage"
+    echo 
+    printf "%-5s %-20s %-30s" $filename -b "# Backup the current system."
+    echo
+    printf "%-5s %-20s %-30s" $filename -l "# Browse backed up systems."
+    echo
+    printf "%-5s %-20s %-60s" $filename -d "# Delete backed up systems.The default deleted file is "
+    echo 
+    printf "%-5s %-20s %-60s" "" "" "  older. If you want to specify a date, see -t usage"
+    echo 
+    printf "%-5s %-20s %-30s" $filename "-t 2020-9-20 -r"  "# Restore 2020-9-20 backed up system."
+    echo
+    echo
+    echo
+    echo "Option description:"
+    printf "%-8s %-10s %-30s" " " -b "Backup current system."
+    echo 
+    printf "%-8s %-10s %-30s" " " -r "Restore specific system, need to figure date."
+    echo
+    printf "%-8s %-10s %-30s" " " -d "Delete one system backup file." 
+    echo
+    printf "%-8s %-10s %-30s" " " -l "Browse the current system backed up file." 
+    echo
+    printf "%-8s %-10s %-30s" " " -t "Specify the time about restore or delete option"
+    echo
+    printf "%-8s %-10s %-30s" " " -v "Display the version info." 
+    echo
+    printf "%-8s %-10s %-30s" " " -p "Re-specify the storage path of the backup file." 
+    echo
+    printf "%-8s %-10s %-30s" " " --help "Display the help information."
+    echo 
+    exit
+}
+
+# The following is entry of program 
+
+temp=`getopt -o t:br::ld::vp --long help -n "$0" -- "$@"`
+
+if [ $? != 0 ] ; then
+  echo "Try '$filename --help' for more information."
+  exit 1
+fi
+
+eval set -- "$temp"
+while true
+do
+    case "$1" in
+        -t)
+            filedate=$2
+            shift 2
+            ;;
+        -b)
+            BackupSystem $Bkdir
+            shift
+            ;;
+        -r)
+            case "$2" in
+                "")
+                    echo "No recovery path specified, default path is /"
+                    RestoreSystem $Bkdir /
+                    shift 2
+                    ;;
+                *)
+                    echo "Recovery path is $2"
+                    RestoreSystem $Bkdir $2
+                    shift 2
+                    ;;
+            esac ;;
+         -d)
+            case "$2" in
+                "")
+                    Backuprm $Bkdir
+                    shift 2
+                    ;;
+                *)
+                    Backuprm $Bkdir $2
+                    shift 2
+                    ;;
+            esac ;;
+        -l)
+            lookup $Bkdir
+            shift
+            ;;
+        --help)
+            Usage
+            ;;
+        -v|-V)
+            echo "$filename version `cat /usr/share/bksys/version`"
+            exit 0
+            ;;
+        -p)
+            read -p "storage path:" Bkdir
+            if [ -d $Bkdir ];then
+                sed -i '$d' /etc/profile
+                sed -i '$d' /etc/profile
+                echo -e "# Bkd enviroment set \nexport Bkdir=$Bkdir" >> /etc/profile
+                exit 0
+            else
+                echo The directory is not exist!
+                exit 1
+            fi
+            ;;
+        *)
+            exit 1
+            ;;    
+     esac
+done
